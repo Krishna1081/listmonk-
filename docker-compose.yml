@@ -1,3 +1,5 @@
+version: "3.7"
+
 x-db-credentials: &db-credentials                             # Use the default POSTGRES_ credentials if they're available or simply default to "listmonk"
   POSTGRES_USER: &db-user listmonk                            # for database user, password, and database name
   POSTGRES_PASSWORD: &db-password listmonk
@@ -6,7 +8,7 @@ x-db-credentials: &db-credentials                             # Use the default 
 services:
   # listmonk app
   app:
-    image: listmonk/listmonk:latest
+    build: .
     container_name: listmonk_app
     restart: unless-stopped
     ports:
@@ -15,7 +17,8 @@ services:
       - listmonk
     hostname: listmonk.example.com                            # Recommend using FQDN for hostname
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     command: [sh, -c, "./listmonk --install --idempotent --yes --config '' && ./listmonk --upgrade --yes --config '' && ./listmonk --config ''"]
                                                               # --config (file) param is set to empty so that listmonk only uses the env vars (below) for config.
                                                               # --install --idempotent ensures that DB installation happens only once on an empty DB, on the first ever start.
@@ -26,7 +29,7 @@ services:
       LISTMONK_db__user: *db-user
       LISTMONK_db__password: *db-password
       LISTMONK_db__database: *db-name
-      LISTMONK_db__host: listmonk_db
+      LISTMONK_db__host: db
       LISTMONK_db__port: 5432
       LISTMONK_db__ssl_mode: disable
       LISTMONK_db__max_open: 25
@@ -39,29 +42,48 @@ services:
       - ./uploads:/listmonk/uploads:rw                        # Mount an uploads directory on the host to /listmonk/uploads inside the container.
                                                               # To use this, change directory path in Admin -> Settings -> Media to /listmonk/uploads
 
+  frontend:
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: listmonk_frontend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    networks:
+      - listmonk
+    depends_on:
+      - app
+
   # Postgres database
   db:
     image: postgres:17-alpine
     container_name: listmonk_db
     restart: unless-stopped
     ports:
-      - "127.0.0.1:5432:5432"                                 # Only bind on the local interface. To connect to Postgres externally, change this to 0.0.0.0
+      - "5432:5432"
     networks:
       - listmonk
     environment:
-      <<: *db-credentials
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U listmonk"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
+      - POSTGRES_USER=listmonk
+      - POSTGRES_PASSWORD=listmonk
+      - POSTGRES_DB=listmonk
     volumes:
       - type: volume
         source: listmonk-data
         target: /var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U listmonk"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 networks:
   listmonk:
+    name: listmonk
+    driver: bridge
 
 volumes:
   listmonk-data:
+    name: listmonk-data

@@ -500,69 +500,23 @@ DELETE FROM lists WHERE id = ALL($1);
 -- campaigns
 -- name: create-campaign
 -- This creates the campaign and inserts campaign_lists relationships.
-WITH tpl AS (
-    -- Select the template for the given template ID or use the default template.
-    SELECT
-        -- If the template is a visual template, then use it's HTML body as the campaign
-        -- body and its block source as the campaign's block source,
-        -- and don't set a template_id in the campaigns table, as it's essentially an
-        -- HTML template body "import" during creation.
-        (CASE WHEN type = 'campaign_visual' THEN NULL ELSE id END) AS id,
-        (CASE WHEN type = 'campaign_visual' THEN body ELSE '' END) AS body,
-        (CASE WHEN type = 'campaign_visual' THEN body_source ELSE NULL END) AS body_source,
-        (CASE WHEN type = 'campaign_visual' THEN 'visual' ELSE 'richtext' END) AS content_type
-    FROM templates
-    WHERE
-        CASE
-            -- If a template ID is present, use it. If not, use the default template only if
-            -- it's not a visual template.
-            WHEN $13::INT IS NOT NULL THEN id = $13::INT
-            ELSE $8 != 'visual' AND is_default = TRUE
-        END
-    LIMIT 1
+WITH camp AS (
+    INSERT INTO campaigns (
+        uuid, type, name, subject, from_email, from_emails, from_emails_strategy,
+        body, altbody, content_type, send_at, headers, tags, messenger,
+        template_id, archive, archive_slug, archive_template_id, archive_meta,
+        body_source
+    ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+    ) RETURNING id
 ),
-counts AS (
-    -- This is going to be slow on large databases.
-    SELECT
-        COALESCE(COUNT(DISTINCT sl.subscriber_id), 0) AS to_send, COALESCE(MAX(s.id), 0) AS max_sub_id
-    FROM subscriber_lists sl
-        JOIN lists l ON sl.list_id = l.id
-        JOIN subscribers s ON sl.subscriber_id = s.id
-    WHERE sl.list_id = ANY($14::INT[])
-      AND s.status != 'blocklisted'
-      AND (
-        (l.optin = 'double' AND sl.status = 'confirmed') OR
-        (l.optin != 'double' AND sl.status != 'unsubscribed')
-      )
-),
-camp AS (
-    INSERT INTO campaigns (uuid, type, name, subject, from_email, body, altbody,
-        content_type, send_at, headers, tags, messenger, template_id, to_send,
-        max_subscriber_id, archive, archive_slug, archive_template_id, archive_meta, body_source)
-        SELECT $1, $2, $3, $4, $5,
-            -- body
-            COALESCE(NULLIF($6, ''), (SELECT body FROM tpl), ''),
-            $7,
-            $8::content_type,
-            $9, $10, $11, $12,
-            (SELECT id FROM tpl),
-            (SELECT to_send FROM counts),
-            (SELECT max_sub_id FROM counts),
-            $15, $16,
-            -- archive_template_id
-            $17,
-            $18,
-            -- body_source
-            COALESCE($20, (SELECT body_source FROM tpl))
-        RETURNING id
+clists AS (
+    INSERT INTO campaign_lists (campaign_id, list_id, list_name)
+        (SELECT id as campaign_id, list_id, name FROM camp, lists WHERE list_id=ANY($21::INT[]))
 ),
 med AS (
     INSERT INTO campaign_media (campaign_id, media_id, filename)
-        (SELECT (SELECT id FROM camp), id, filename FROM media WHERE id=ANY($19::INT[]))
-),
-insLists AS (
-    INSERT INTO campaign_lists (campaign_id, list_id, list_name)
-        SELECT (SELECT id FROM camp), id, name FROM lists WHERE id=ANY($14::INT[])
+        (SELECT id as campaign_id, media_id, filename FROM camp, media WHERE media_id=ANY($22::INT[]))
 )
 SELECT id FROM camp;
 
@@ -873,44 +827,46 @@ WITH camp AS (
         name=$2,
         subject=$3,
         from_email=$4,
-        body=$5,
-        altbody=(CASE WHEN $6 = '' THEN NULL ELSE $6 END),
-        content_type=$7::content_type,
-        send_at=$8::TIMESTAMP WITH TIME ZONE,
+        from_emails=$5,
+        from_emails_strategy=$6,
+        body=$7,
+        altbody=(CASE WHEN $8 = '' THEN NULL ELSE $8 END),
+        content_type=$9::content_type,
+        send_at=$10::TIMESTAMP WITH TIME ZONE,
         status=(
             CASE
-                WHEN status = 'scheduled' AND $8 IS NULL THEN 'draft'
+                WHEN status = 'scheduled' AND $10 IS NULL THEN 'draft'
                 ELSE status
             END
         ),
-        headers=$9,
-        tags=$10::VARCHAR(100)[],
-        messenger=$11,
+        headers=$11,
+        tags=$12::VARCHAR(100)[],
+        messenger=$13,
         -- template_id shouldn't be saved for visual campaigns.
-        template_id=(CASE WHEN $7::content_type = 'visual' THEN NULL ELSE $12::INT END),
-        archive=$14,
-        archive_slug=$15,
-        archive_template_id=(CASE WHEN $7::content_type = 'visual' THEN NULL ELSE $16::INT END),
-        archive_meta=$17,
-        body_source=$19,
+        template_id=(CASE WHEN $9::content_type = 'visual' THEN NULL ELSE $14::INT END),
+        archive=$16,
+        archive_slug=$17,
+        archive_template_id=(CASE WHEN $9::content_type = 'visual' THEN NULL ELSE $18::INT END),
+        archive_meta=$19,
+        body_source=$21,
         updated_at=NOW()
     WHERE id = $1 RETURNING id
 ),
 clists AS (
     -- Reset list relationships
-    DELETE FROM campaign_lists WHERE campaign_id = $1 AND NOT(list_id = ANY($13))
+    DELETE FROM campaign_lists WHERE campaign_id = $1 AND NOT(list_id = ANY($15))
 ),
 med AS (
     DELETE FROM campaign_media WHERE campaign_id = $1
-    AND ( media_id IS NULL or NOT(media_id = ANY($18))) RETURNING media_id
+    AND ( media_id IS NULL or NOT(media_id = ANY($20))) RETURNING media_id
 ),
 medi AS (
     INSERT INTO campaign_media (campaign_id, media_id, filename)
-        (SELECT $1 AS campaign_id, id, filename FROM media WHERE id=ANY($18::INT[]))
+        (SELECT $1 AS campaign_id, id, filename FROM media WHERE id=ANY($20::INT[]))
         ON CONFLICT (campaign_id, media_id) DO NOTHING
 )
 INSERT INTO campaign_lists (campaign_id, list_id, list_name)
-    (SELECT $1 as campaign_id, id, name FROM lists WHERE id=ANY($13::INT[]))
+    (SELECT $1 as campaign_id, id, name FROM lists WHERE id=ANY($15::INT[]))
     ON CONFLICT (campaign_id, list_id) DO UPDATE SET list_name = EXCLUDED.list_name;
 
 -- name: update-campaign-counts

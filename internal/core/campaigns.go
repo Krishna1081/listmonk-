@@ -161,6 +161,10 @@ func (c *Core) GetArchivedCampaigns(offset, limit int) (models.Campaigns, int, e
 
 // CreateCampaign creates a new campaign.
 func (c *Core) CreateCampaign(o models.Campaign, listIDs []int, mediaIDs []int) (models.Campaign, error) {
+	// Log incoming campaign data
+	c.log.Printf("Core.CreateCampaign - Incoming campaign data: %+v", o)
+	c.log.Printf("Core.CreateCampaign - FromEmails: %v, FromEmailsStrategy: %v", o.FromEmails, o.FromEmailsStrategy)
+
 	uu, err := uuid.NewV4()
 	if err != nil {
 		c.log.Printf("error generating UUID: %v", err)
@@ -176,6 +180,8 @@ func (c *Core) CreateCampaign(o models.Campaign, listIDs []int, mediaIDs []int) 
 		o.Name,
 		o.Subject,
 		o.FromEmail,
+		o.FromEmails,
+		o.FromEmailsStrategy,
 		o.Body,
 		o.AltBody,
 		o.ContentType,
@@ -206,15 +212,25 @@ func (c *Core) CreateCampaign(o models.Campaign, listIDs []int, mediaIDs []int) 
 		return models.Campaign{}, err
 	}
 
+	// Log created campaign data
+	c.log.Printf("Core.CreateCampaign - Created campaign data: %+v", out)
+	c.log.Printf("Core.CreateCampaign - Created FromEmails: %v, FromEmailsStrategy: %v", out.FromEmails, out.FromEmailsStrategy)
+
 	return out, nil
 }
 
 // UpdateCampaign updates a campaign.
 func (c *Core) UpdateCampaign(id int, o models.Campaign, listIDs []int, mediaIDs []int) (models.Campaign, error) {
+	// Log incoming campaign data
+	c.log.Printf("Core.UpdateCampaign - Incoming campaign data: %+v", o)
+	c.log.Printf("Core.UpdateCampaign - FromEmails: %v, FromEmailsStrategy: %v", o.FromEmails, o.FromEmailsStrategy)
+
 	_, err := c.q.UpdateCampaign.Exec(id,
 		o.Name,
 		o.Subject,
 		o.FromEmail,
+		o.FromEmails,
+		o.FromEmailsStrategy,
 		o.Body,
 		o.AltBody,
 		o.ContentType,
@@ -240,6 +256,10 @@ func (c *Core) UpdateCampaign(id int, o models.Campaign, listIDs []int, mediaIDs
 	if err != nil {
 		return models.Campaign{}, err
 	}
+
+	// Log updated campaign data
+	c.log.Printf("Core.UpdateCampaign - Updated campaign data: %+v", out)
+	c.log.Printf("Core.UpdateCampaign - Updated FromEmails: %v, FromEmailsStrategy: %v", out.FromEmails, out.FromEmailsStrategy)
 
 	return out, nil
 }

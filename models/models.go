@@ -226,6 +226,8 @@ type Campaign struct {
 	Name              string          `db:"name" json:"name"`
 	Subject           string          `db:"subject" json:"subject"`
 	FromEmail         string          `db:"from_email" json:"from_email"`
+	FromEmails        pq.StringArray  `db:"from_emails" json:"from_emails"`
+	FromEmailsStrategy string         `db:"from_emails_strategy" json:"from_emails_strategy"`
 	Body              string          `db:"body" json:"body"`
 	BodySource        null.String     `db:"body_source" json:"body_source"`
 	AltBody           null.String     `db:"altbody" json:"altbody"`

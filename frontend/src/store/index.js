@@ -1,6 +1,7 @@
 import Vue from 'vue';
 import Vuex from 'vuex';
 import { models } from '../constants';
+import campaign from './modules/campaign';
 
 Vue.use(Vuex);
 
@@ -51,5 +52,6 @@ export default new Vuex.Store({
   },
 
   modules: {
+    campaign
   },
 });

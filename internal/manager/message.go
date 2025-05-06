@@ -11,12 +11,26 @@ import (
 // to message templates while they're compiled. It represents a message from
 // a campaign that's bound to a single Subscriber.
 func (m *Manager) NewCampaignMessage(c *models.Campaign, s models.Subscriber) (CampaignMessage, error) {
+	// Choose the sender based on strategy
+	fromEmail := c.FromEmail
+	if len(c.FromEmails) > 0 {
+		switch c.FromEmailsStrategy {
+		case "roundrobin":
+			// Simple round-robin: use subscriber ID modulo number of senders
+			idx := int(int64(s.ID) % int64(len(c.FromEmails)))
+			fromEmail = c.FromEmails[idx]
+		default:
+			// Default to first sender if strategy not recognized
+			fromEmail = c.FromEmails[0]
+		}
+	}
+
 	msg := CampaignMessage{
 		Campaign:   c,
 		Subscriber: s,
 
 		subject:  c.Subject,
-		from:     c.FromEmail,
+		from:     fromEmail,
 		to:       s.Email,
 		unsubURL: fmt.Sprintf(m.cfg.UnsubURL, c.UUID, s.UUID),
 	}

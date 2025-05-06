@@ -73,9 +73,38 @@
                     :placeholder="$t('campaigns.subject')" required />
                 </b-field>
 
-                <b-field :label="$t('campaigns.fromAddress')" label-position="on-border">
-                  <b-input :maxlength="200" v-model="form.fromEmail" name="from_email" :disabled="!canEdit"
-                    :placeholder="$t('campaigns.fromAddressPlaceholder')" required />
+                <b-field label="From Address" label-position="on-border">
+                  <b-taginput
+                    v-model="selectedSender"
+                    :data="senderOptions"
+                    autocomplete
+                    :allow-new="false"
+                    :open-on-focus="true"
+                    field="username"
+                    :disabled="form.isFromAddressDisabled"
+                    :placeholder="$t('Select Senders')"
+                    @click.native.prevent
+                    @focus.native.prevent
+                    @input="onSenderChange"
+                  >
+                    <template #default="props">
+                      <div class="media">
+                        <div class="media-content">
+                          <strong>{{ props.option.username }}</strong>
+                          <br>
+                          <small>{{ props.option.host }}:{{ props.option.port }}</small>
+                        </div>
+                      </div>
+                    </template>
+                  </b-taginput>
+                </b-field>
+
+                <b-field label="Sending Strategy" label-position="on-border">
+                  <b-select v-model="localSendingStrategy" :disabled="form.isSendingStrategyDisabled" expanded @click.native.prevent>
+                    <option v-for="strategy in sendingStrategies" :key="strategy.value" :value="strategy.value">
+                      {{ strategy.label }}
+                    </option>
+                  </b-select>
                 </b-field>
 
                 <list-selector v-model="form.lists" :selected="form.lists" :all="lists.results" :disabled="!canEdit"
@@ -342,6 +371,11 @@ export default Vue.extend({
         visual: this.$t('campaigns.visual'),
       }),
 
+      sendingStrategies: [
+        { value: 'roundrobin', label: 'Round Robin' },
+        { value: 'random', label: 'Random' },
+        { value: 'fixed', label: 'Fixed Sender' }
+      ],
       isNew: false,
       isEditing: false,
       isHeadersVisible: false,
@@ -349,8 +383,20 @@ export default Vue.extend({
       isAttachModalOpen: false,
       isPreviewingArchive: false,
       activeTab: 'campaign',
+      localSendingStrategy: 'roundrobin',
+      localSelectedSender: [],
 
-      data: {},
+      // Add persistent sender state
+      persistentSenderState: {
+        from_emails: [],
+        from_emails_strategy: 'roundrobin',
+        selectedSender: []
+      },
+
+      data: {
+        from_emails: [],
+        from_emails_strategy: 'roundrobin'
+      },
 
       // IDs from ?list_id query param.
       selListIDs: [],
@@ -375,7 +421,6 @@ export default Vue.extend({
         },
         altbody: null,
         media: [],
-
         // Parsed Date() version of send_at from the API.
         sendAtDate: null,
         sendLater: false,
@@ -383,11 +428,109 @@ export default Vue.extend({
         archiveMetaStr: '{}',
         archiveMeta: {},
         testEmails: [],
+        // Form field states
+        isFromAddressDisabled: false,
+        isSendingStrategyDisabled: false,
+        // Sender fields
+        from_emails: [],
+        from_emails_strategy: 'roundrobin'
       },
+
+      // Sender selection state
+      senderOptions: [],
+      selectedSender: [],
     };
   },
 
   methods: {
+    resetForm() {
+      // Reset form data
+      this.form = {
+        archiveSlug: null,
+        name: '',
+        subject: '',
+        fromEmail: '',
+        headersStr: '[]',
+        headers: [],
+        messenger: 'email',
+        lists: [],
+        tags: [],
+        sendAt: null,
+        content: {
+          contentType: 'richtext',
+          body: '',
+          bodySource: null,
+          templateId: null,
+        },
+        altbody: null,
+        media: [],
+        sendAtDate: null,
+        sendLater: false,
+        archive: false,
+        archiveMetaStr: '{}',
+        archiveMeta: {},
+        testEmails: [],
+        isFromAddressDisabled: false,
+        isSendingStrategyDisabled: false,
+        from_emails: [],
+        from_emails_strategy: 'roundrobin'
+      };
+
+      // Reset component state
+      this.isHeadersVisible = false;
+      this.isAttachFieldVisible = false;
+      this.isAttachModalOpen = false;
+      this.isPreviewingArchive = false;
+      this.activeTab = 'campaign';
+      this.selListIDs = [];
+
+      // Only clear sender state when explicitly creating a new campaign
+      if (this.isNew) {
+        this.selectedSender = [];
+        this.localSendingStrategy = 'roundrobin';
+        this.$store.commit('campaign/updateSenders', {
+          selectedSender: [],
+          sendingStrategy: 'roundrobin'
+        });
+      }
+    },
+
+    async fetchSenders() {
+      try {
+        const res = await this.$api.getSettings();
+        const smtpSettings = res.smtp || [];
+        
+        // Format sender data for the taginput
+        this.senderOptions = smtpSettings.map(item => ({
+          id: item.username,
+          username: item.username,
+          host: item.host,
+          port: item.port,
+          max_connections: item.max_connections,
+          max_message_retries: item.max_message_retries,
+          idle_timeout: item.idle_timeout
+        }));
+
+        console.log('Fetched Sender Options:', this.senderOptions);
+
+        // Update store with senders
+        this.$store.commit('campaign/updateSenders', {
+          allLists: this.senderOptions
+        });
+
+        // If no selected sender and we have senders, set default
+        if (!this.selectedSender?.length && this.senderOptions.length > 0) {
+          this.selectedSender = [this.senderOptions[0]];
+          this.$store.commit('campaign/updateSenders', {
+            selectedSender: this.selectedSender,
+            sendingStrategy: this.localSendingStrategy
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching senders:', error);
+        this.$utils.toast(this.$t('campaigns.errorFetchingSenders'), 'is-danger');
+      }
+    },
     formatDateTime(s) {
       return dayjs(s).format('YYYY-MM-DD HH:mm');
     },
@@ -486,29 +629,52 @@ export default Vue.extend({
 
     getCampaign(id) {
       return this.$api.getCampaign(id).then((data) => {
-        this.data = data;
+        // Store the sender information in persistent state
+        this.persistentSenderState = {
+          from_emails: data.from_emails || this.persistentSenderState?.from_emails || [],
+          from_emails_strategy: data.from_emails_strategy || this.persistentSenderState?.from_emails_strategy || 'round-robin',
+          selectedSender: this.selectedSender || []
+        };
+        
+        // Update the campaign data with persistent sender information
+        this.data = {
+          ...data,
+          from_emails: this.persistentSenderState.from_emails,
+          from_emails_strategy: this.persistentSenderState.from_emails_strategy
+        };
+
+        // Update form data
         this.form = {
           ...this.form,
           ...data,
-          headersStr: JSON.stringify(data.headers, null, 4),
+          from_emails: this.persistentSenderState.from_emails,
+          from_emails_strategy: this.persistentSenderState.from_emails_strategy,
+          headersStr: JSON.stringify(data.headers || [], null, 4),
           archiveMetaStr: data.archiveMeta ? JSON.stringify(data.archiveMeta, null, 4) : '{}',
-
-          // The structure that is populated by editor input event.
           content: {
-            contentType: data.contentType,
-            body: data.body,
-            bodySource: data.bodySource,
-            templateId: data.templateId,
+            contentType: data.contentType || 'richtext',
+            body: data.body || '',
+            bodySource: data.bodySource || null,
+            templateId: data.templateId || null,
           },
         };
-        this.isAttachFieldVisible = this.form.media.length > 0;
 
-        this.form.media = this.form.media.map((f) => {
-          if (!f.id) {
-            return { ...f, filename: `❌ ${f.filename}` };
-          }
-          return f;
-        });
+        // Update sender state from persistent state
+        if (this.persistentSenderState.from_emails.length > 0) {
+          const senderObjects = this.persistentSenderState.from_emails.map(email => {
+            const sender = this.senderOptions.find(s => s.username === email);
+            return sender || { username: email };
+          });
+          
+          this.selectedSender = senderObjects;
+          this.localSendingStrategy = this.persistentSenderState.from_emails_strategy;
+          
+          // Update store
+          this.$store.commit('campaign/updateSenders', {
+            selectedSender: senderObjects,
+            sendingStrategy: this.localSendingStrategy
+          });
+        }
       });
     },
 
@@ -538,34 +704,16 @@ export default Vue.extend({
     },
 
     createCampaign() {
+      // Get selected sender emails
+      const selectedSenders = this.selectedSender.map(sender => sender.username);
+      
       const data = {
-        archiveSlug: this.form.subject,
         name: this.form.name,
         subject: this.form.subject,
         lists: this.form.lists.map((l) => l.id),
-        from_email: this.form.fromEmail,
-        content_type: this.form.content.contentType,
-        messenger: this.form.messenger,
-        type: 'regular',
-        tags: this.form.tags,
-        send_at: this.form.sendLater ? this.form.sendAtDate : null,
-        headers: this.form.headers,
-        media: this.form.media.map((m) => m.id),
-      };
-
-      this.$api.createCampaign(data).then((d) => {
-        this.$router.push({ name: 'campaign', hash: '#content', params: { id: d.id } });
-      });
-      return false;
-    },
-
-    async updateCampaign(typ) {
-      const data = {
-        archive_slug: this.form.archiveSlug,
-        name: this.form.name,
-        subject: this.form.subject,
-        lists: this.form.lists.map((l) => l.id),
-        from_email: this.form.fromEmail,
+        from_email: selectedSenders.length > 0 ? selectedSenders[0] : this.form.fromEmail,
+        from_emails: selectedSenders,
+        from_emails_strategy: this.localSendingStrategy,
         messenger: this.form.messenger,
         type: 'regular',
         tags: this.form.tags,
@@ -579,7 +727,71 @@ export default Vue.extend({
         archive: this.form.archive,
         archive_template_id: this.form.archiveTemplateId,
         archive_meta: this.form.archiveMeta,
-        media: this.form.media.map((m) => m.id),
+        media: this.form.media.map((m) => m.id)
+      };
+
+      this.$api.createCampaign(data).then((d) => {
+        // Update the campaign with the response data
+        this.data = {
+          ...d,
+          from_emails: d.from_emails || selectedSenders,
+          from_emails_strategy: d.from_emails_strategy || this.localSendingStrategy
+        };
+        
+        this.form = {
+          ...this.form,
+          ...d,
+          from_emails: d.from_emails || selectedSenders,
+          from_emails_strategy: d.from_emails_strategy || this.localSendingStrategy,
+          headersStr: JSON.stringify(d.headers || [], null, 4),
+          archiveMetaStr: d.archiveMeta ? JSON.stringify(d.archiveMeta, null, 4) : '{}',
+          content: {
+            contentType: d.contentType || 'richtext',
+            body: d.body || '',
+            bodySource: d.bodySource || null,
+            templateId: d.templateId || null
+          }
+        };
+
+        // Update sender state
+        this.selectedSender = selectedSenders.map(email => {
+          const sender = this.senderOptions.find(s => s.username === email);
+          return sender || { username: email };
+        });
+
+        this.$utils.toast(this.$t('campaigns.created'));
+        this.$router.push(`/campaigns/${d.id}`);
+      }).catch((err) => {
+        this.$utils.toast(err.message, 'is-danger');
+      });
+    },
+
+    async updateCampaign(typ) {
+      // Get selected sender emails
+      const selectedSenders = this.selectedSender.map(sender => sender.username);
+      
+      const data = {
+        archive_slug: this.form.archiveSlug,
+        name: this.form.name,
+        subject: this.form.subject,
+        lists: this.form.lists.map((l) => l.id),
+        from_email: selectedSenders.length > 0 ? selectedSenders[0] : this.form.fromEmail,
+        from_emails: selectedSenders,
+        from_emails_strategy: this.localSendingStrategy,
+        messenger: this.form.messenger,
+        type: 'regular',
+        tags: this.form.tags,
+        send_at: this.form.sendLater ? this.form.sendAtDate : null,
+        headers: this.form.headers,
+        template_id: this.form.content.templateId,
+        content_type: this.form.content.contentType,
+        body: this.form.content.body,
+        body_source: this.form.content.bodySource,
+        altbody: this.form.content.contentType !== 'plain' ? this.form.altbody : null,
+        archive: this.form.archive,
+        archive_template_id: this.form.archiveTemplateId,
+        archive_meta: this.form.archiveMeta,
+        media: this.form.media.map((m) => m.id)
       };
 
       let typMsg = 'globals.messages.updated';
@@ -594,10 +806,33 @@ export default Vue.extend({
       // This promise is used by startCampaign to first save before starting.
       return new Promise((resolve) => {
         this.$api.updateCampaign(this.data.id, data).then((d) => {
-          this.data = d;
-          this.form.archiveSlug = d.archiveSlug;
+          // Update the campaign data with sender information
+          this.data = {
+            ...d,
+            from_emails: d.from_emails || selectedSenders,
+            from_emails_strategy: d.from_emails_strategy || this.localSendingStrategy
+          };
+          
+          this.form = {
+            ...this.form,
+            ...d,
+            from_emails: d.from_emails || selectedSenders,
+            from_emails_strategy: d.from_emails_strategy || this.localSendingStrategy,
+            headersStr: JSON.stringify(d.headers || [], null, 4),
+            archiveMetaStr: d.archiveMeta ? JSON.stringify(d.archiveMeta, null, 4) : '{}',
+            content: {
+              contentType: d.contentType || 'richtext',
+              body: d.body || '',
+              bodySource: d.bodySource || null,
+              templateId: d.templateId || null
+            }
+          };
 
           this.$utils.toast(this.$t(typMsg, { name: d.name }));
+          resolve();
+        }).catch(error => {
+          console.error('Error updating campaign:', error);
+          this.$utils.toast(this.$t('campaigns.errorUpdating'), 'is-danger');
           resolve();
         });
       });
@@ -654,10 +889,49 @@ export default Vue.extend({
         this.data = d;
       });
     },
+
+    onSenderChange(selectedSenders) {
+      console.log('Sender selection changed:', selectedSenders);
+      
+      // Update persistent state
+      this.persistentSenderState.selectedSender = selectedSenders;
+      this.persistentSenderState.from_emails = selectedSenders.map(sender => sender.username);
+      
+      // Update component state
+      this.selectedSender = selectedSenders;
+      this.form.from_emails = this.persistentSenderState.from_emails;
+      
+      // Update data object if editing
+      if (this.isEditing) {
+        this.data.from_emails = this.persistentSenderState.from_emails;
+      }
+    },
+
+    onSendingStrategyChange(value) {
+      // Update persistent state
+      this.persistentSenderState.from_emails_strategy = value;
+      this.localSendingStrategy = value;
+      
+      // Update form and data
+      this.form.from_emails_strategy = value;
+      if (this.isEditing) {
+        this.data.from_emails_strategy = value;
+      }
+      
+      // Update store
+      this.$store.commit('campaign/updateSenders', {
+        selectedSender: this.selectedSender,
+        sendingStrategy: value
+      });
+    },
   },
 
   computed: {
     ...mapState(['serverConfig', 'loading', 'lists', 'templates']),
+    ...mapState({
+      storeSendingStrategy: state => state.campaign?.sendingStrategy || 'roundrobin',
+      storeSelectedSender: state => state.campaign?.selectedSender || []
+    }),
 
     canManage() {
       return this.$can('campaigns:manage_all', 'campaigns:manage');
@@ -666,6 +940,10 @@ export default Vue.extend({
     canEdit() {
       return this.isNew
         || this.data.status === 'draft' || this.data.status === 'scheduled' || this.data.status === 'paused';
+    },
+
+    isCampaignComplete() {
+      return this.data.status === 'finished' || this.data.status === 'cancelled';
     },
 
     canSchedule() {
@@ -724,72 +1002,124 @@ export default Vue.extend({
         this.form.sendAtDate = null;
       }
     },
+
+    // Watch campaign status changes to update form field states
+    'data.status': {
+      handler(newStatus) {
+        if (!newStatus) return;
+        
+        const isComplete = newStatus === 'finished' || newStatus === 'cancelled';
+        this.form.isFromAddressDisabled = !this.canEdit || isComplete;
+        this.form.isSendingStrategyDisabled = !this.canEdit || isComplete;
+        
+        // Always use persistent state for sender information
+        if (this.persistentSenderState) {
+          this.data.from_emails = this.persistentSenderState.from_emails;
+          this.data.from_emails_strategy = this.persistentSenderState.from_emails_strategy;
+          this.form.from_emails = this.persistentSenderState.from_emails;
+          this.form.from_emails_strategy = this.persistentSenderState.from_emails_strategy;
+          this.selectedSender = this.persistentSenderState.selectedSender;
+          
+          // Update store
+          this.$store.commit('campaign/updateSenders', {
+            selectedSender: this.selectedSender,
+            sendingStrategy: this.localSendingStrategy
+          });
+        }
+      },
+      immediate: true
+    },
+
+    storeSendingStrategy: {
+      immediate: true,
+      handler(newValue) {
+        this.localSendingStrategy = newValue;
+      }
+    },
+
+    storeSelectedSender: {
+      immediate: true,
+      handler(newValue) {
+        this.localSelectedSender = newValue;
+      }
+    },
   },
 
-  mounted() {
-    window.onbeforeunload = () => this.isUnsaved() || null;
+  async mounted() {
+    try {
+      // Initialize state from localStorage
+      await this.$store.dispatch('campaign/initState');
 
-    // Fill default form fields.
-    this.form.fromEmail = this.serverConfig.from_email;
+      // Fetch senders first to ensure we have the latest data
+      await this.fetchSenders();
 
-    // New campaign.
-    const { id } = this.$route.params;
-    if (id === 'new') {
-      this.isNew = true;
+      window.onbeforeunload = () => this.isUnsaved() || null;
 
-      if (this.$route.query.list_id) {
-        // Multiple list_id query params.
-        let strIds = [];
-        if (typeof this.$route.query.list_id === 'object') {
-          strIds = this.$route.query.list_id;
-        } else {
-          strIds = [this.$route.query.list_id];
+      // Fill default form fields.
+      this.form.fromEmail = this.serverConfig?.from_email;
+
+      // New campaign.
+      const { id } = this.$route.params;
+      if (id === 'new') {
+        this.isNew = true;
+        // Clear any existing state when creating a new campaign
+        await this.$store.dispatch('campaign/clearState');
+        this.resetForm();
+      } else {
+        const intID = parseInt(id, 10);
+        if (intID <= 0 || Number.isNaN(intID)) {
+          this.$utils.toast(this.$t('campaigns.invalid'));
+          return;
         }
 
-        this.selListIDs = strIds.map((v) => parseInt(v, 10));
-      }
-    } else {
-      const intID = parseInt(id, 10);
-      if (intID <= 0 || Number.isNaN(intID)) {
-        this.$utils.toast(this.$t('campaigns.invalid'));
-        return;
+        this.isEditing = true;
+        // For existing campaigns, initialize sender state from the campaign data
+        if (this.data.senders) {
+          this.selectedSender = this.data.senders;
+          this.$store.commit('campaign/updateSenders', {
+            selectedSender: this.data.senders,
+            sendingStrategy: this.localSendingStrategy
+          });
+        }
       }
 
-      this.isEditing = true;
-    }
-
-    // Get templates list.
-    this.$api.getTemplates().then((data) => {
-      if (data.length > 0) {
+      // Get templates list.
+      const templatesData = await this.$api.getTemplates();
+      if (templatesData.length > 0) {
         if (!this.form.templateId) {
-          const tpl = data.find((i) => i.isDefault === true);
+          const tpl = templatesData.find((i) => i.isDefault === true);
           this.form.templateId = tpl.id;
         }
       }
-    });
 
-    // Fetch campaign.
-    if (this.isEditing) {
-      this.getCampaign(id).then(() => {
+      // Fetch campaign.
+      if (this.isEditing) {
+        await this.getCampaign(id);
         if (this.$route.hash !== '') {
           this.activeTab = this.$route.hash.replace('#', '');
         }
+      } else {
+        this.form.messenger = 'email';
+      }
+
+      this.$nextTick(() => {
+        if (this.$refs.focus) {
+          this.$refs.focus.focus();
+        }
       });
-    } else {
-      this.form.messenger = 'email';
+
+      this.$events.$on('campaign.update', () => {
+        this.onSubmit('update');
+      });
+    } catch (error) {
+      console.error('Error in mounted hook:', error);
+      this.$utils.toast(this.$t('campaigns.errorInitializing'), 'is-danger');
     }
-
-    this.$nextTick(() => {
-      this.$refs.focus.focus();
-    });
-
-    this.$events.$on('campaign.update', () => {
-      this.onSubmit('update');
-    });
   },
 
   beforeDestroy() {
     this.$events.$off('campaign.update');
+    // Don't clear the state when component is destroyed
   },
 });
 </script>

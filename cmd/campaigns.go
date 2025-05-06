@@ -257,6 +257,10 @@ func (a *App) CreateCampaign(c echo.Context) error {
 		return err
 	}
 
+	// Log incoming request data
+	a.log.Printf("CreateCampaign - Incoming request data: %+v", o)
+	a.log.Printf("CreateCampaign - FromEmails: %v, FromEmailsStrategy: %v", o.FromEmails, o.FromEmailsStrategy)
+
 	// If the campaign's 'opt-in', prepare a default message.
 	if o.Type == models.CampaignTypeOptin {
 		op, err := a.makeOptinCampaignMessage(o)
@@ -288,6 +292,10 @@ func (a *App) CreateCampaign(c echo.Context) error {
 		return err
 	}
 
+	// Log response data
+	a.log.Printf("CreateCampaign - Response data: %+v", out)
+	a.log.Printf("CreateCampaign - Response FromEmails: %v, FromEmailsStrategy: %v", out.FromEmails, out.FromEmailsStrategy)
+
 	return c.JSON(http.StatusOK, okResp{out})
 }
 
@@ -308,6 +316,10 @@ func (a *App) UpdateCampaign(c echo.Context) error {
 		return err
 	}
 
+	// Log existing campaign data
+	a.log.Printf("UpdateCampaign - Existing campaign data: %+v", cm)
+	a.log.Printf("UpdateCampaign - Existing FromEmails: %v, FromEmailsStrategy: %v", cm.FromEmails, cm.FromEmailsStrategy)
+
 	if !canEditCampaign(cm.Status) {
 		return echo.NewHTTPError(http.StatusBadRequest, a.i18n.T("campaigns.cantUpdate"))
 	}
@@ -320,6 +332,10 @@ func (a *App) UpdateCampaign(c echo.Context) error {
 		return err
 	}
 
+	// Log incoming request data
+	a.log.Printf("UpdateCampaign - Incoming request data: %+v", o)
+	a.log.Printf("UpdateCampaign - Incoming FromEmails: %v, FromEmailsStrategy: %v", o.FromEmails, o.FromEmailsStrategy)
+
 	if c, err := a.validateCampaignFields(o); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	} else {
@@ -330,6 +346,10 @@ func (a *App) UpdateCampaign(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+
+	// Log response data
+	a.log.Printf("UpdateCampaign - Response data: %+v", out)
+	a.log.Printf("UpdateCampaign - Response FromEmails: %v, FromEmailsStrategy: %v", out.FromEmails, out.FromEmailsStrategy)
 
 	return c.JSON(http.StatusOK, okResp{out})
 }
